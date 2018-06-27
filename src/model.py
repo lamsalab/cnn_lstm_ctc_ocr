@@ -68,7 +68,8 @@ def norm_layer( bottom, training, name):
     """Short function to build a batch normalization layer with less syntax"""
     top = tf.layers.batch_normalization( bottom, axis=3, # channels last,
                                          training=training,
-                                         name=name )
+                                         name=name,
+                                         fused=True )
     return top
 
 
