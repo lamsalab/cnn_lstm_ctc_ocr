@@ -18,8 +18,8 @@ import os
 import time
 import tensorflow as tf
 from tensorflow.contrib import learn
-import cv2
-import dynmj
+
+import mjsynth
 import model
 
 FLAGS = tf.app.flags.FLAGS
@@ -49,17 +49,20 @@ tf.logging.set_verbosity(tf.logging.WARN)
 # Non-configurable parameters
 mode = learn.ModeKeys.INFER # 'Configure' training mode for dropout layers
 
-def _get_input_stream():
+
+def _get_input():
     """Set up and return image, label, width and text tensors"""
 
-    dataset=dynmj.threaded_input_pipeline(
+    image,width,label,length,text,filename=mjsynth.threaded_input_pipeline(
+        FLAGS.test_path,
+        str.split(FLAGS.filename_pattern,','),
         batch_size=FLAGS.batch_size,
         num_threads=FLAGS.num_input_threads,
+        num_epochs=None, # Repeat for streaming
         batch_device=FLAGS.device, 
-        preprocess_device=FLAGS.device)
-
-    return dataset.make_one_shot_iterator()
-
+        preprocess_device=FLAGS.device )
+    
+    return image,width,label,length
 
 def _get_session_config():
     """Setup session config to soften device placement"""
@@ -121,18 +124,14 @@ def _get_init_trained():
     return init_fn
 
 def main(argv=None):
-    
 
     with tf.Graph().as_default():
-        input_stream = _get_input_stream()
-
-        # Get the next batch
-        image,width,label,length, _ = input_stream.get_next()
+        image,width,label,length = _get_input()
 
         with tf.device(FLAGS.device):
             features,sequence_length = model.convnet_layers( image, width, mode)
             logits = model.rnn_layers( features, sequence_length,
-                                       dynmj.num_classes() )
+                                       mjsynth.num_classes() )
             loss,label_error,sequence_error = _get_testing(
                 logits,sequence_length,label,length)
 
@@ -153,17 +152,29 @@ def main(argv=None):
         with tf.Session(config=session_config) as sess:
             
             sess.run(init_op)
+
+            coord = tf.train.Coordinator() # Launch reader threads
+            threads = tf.train.start_queue_runners(sess=sess,coord=coord)
+            
             summary_writer.add_graph(sess.graph)
 
             try:            
                 while True:
-                    restore_model(sess, _get_checkpoint()) 
-                    step_vals = sess.run(step_ops)
-                    print step_vals
-                    summary_str = sess.run(summary_op)
-                    summary_writer.add_summary(summary_str,step_vals[0])
+                    restore_model(sess, _get_checkpoint()) # Get latest checkpoint
+                    
+                    if not coord.should_stop():
+                        step_vals = sess.run(step_ops)
+                        print step_vals
+                        summary_str = sess.run(summary_op)
+                        summary_writer.add_summary(summary_str,step_vals[0])
+                    else:
+                        break
+                    time.sleep(FLAGS.test_interval_secs)
             except tf.errors.OutOfRangeError:
                 print('Done')
+            finally:
+                coord.request_stop()
+        coord.join(threads)
 
 if __name__ == '__main__':
     tf.app.run()

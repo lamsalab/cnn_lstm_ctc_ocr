@@ -16,14 +16,11 @@
 
 import os
 import tensorflow as tf
-import numpy as np
-from map_generator import data_generator
 
 # The list (well, string) of valid output characters
 # If any example contains a character not found here, an error will result
 # from the calls to .index in the decoder below
 out_charset="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-out_charset_tf=tf.string_split([tf.constant("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")], "")
 
 def num_classes():
     return len(out_charset)
@@ -35,7 +32,7 @@ def bucketed_input_pipeline(base_dir,file_patterns,
                             input_device=None,
                             width_threshold=None,
                             length_threshold=None,
-                            num_epoch=None):
+                            num_epochs=None):
     """Get input tensors bucketed by image width
     Returns:
       image : float32 image tensor [batch_size 32 ? 1] padded to batch max width
@@ -45,77 +42,70 @@ def bucketed_input_pipeline(base_dir,file_patterns,
       text  :  Human readable string for the image
       filename : Source file path
     """
+    queue_capacity = num_threads*batch_size*2
+    # Allow a smaller final batch if we are going for a fixed number of epochs
+    final_batch = (num_epochs!=None) 
 
-    dataset = _get_dataset()
+    data_queue = _get_data_queue(base_dir, file_patterns, 
+                                 capacity=queue_capacity,
+                                 num_epochs=num_epochs)
 
     with tf.device(input_device): # Create bucketing batcher
+        image, width, label, length, text, filename  = _read_word_record(
+            data_queue)
+        image = _preprocess_image(image) # move after batch?
 
-        dataset = dataset.map(_preprocess_dataset, 
-                              num_parallel_calls=num_threads)
-        
-        # Remove input that doesn't fit necessary specifications
-        dataset = dataset.filter(lambda image, 
-                                 width, 
-                                 label, 
-                                 length, 
-                                 text: 
-                                 _get_input_filter(width, width_threshold,
-                                                   length, length_threshold))
-
-        dataset = dataset.apply(tf.contrib.data.bucket_by_sequence_length
-                                (element_length_func=_element_length_fn,
-                                 bucket_batch_sizes=np.full
-                                 (len(boundaries) + 1, batch_size),
-                                 bucket_boundaries=boundaries))
-
-        #TODO potentially add a prefetch after batching (of 1)
-        dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(batch_size, 
-                                                                   count=num_epoch))
-
-        dataset = dataset.map(lambda image, 
-                              width, label,
-                              length, text:
-                              (image, width, 
-                               tf.contrib.layers.dense_to_sparse(label,0),
-                               length, text))
-
-    return dataset
+        keep_input = _get_input_filter(width, width_threshold,
+                                       length, length_threshold)
+        data_tuple = [image, label, length, text, filename]
+        width,data_tuple = tf.contrib.training.bucket_by_sequence_length(
+            input_length=width,
+            tensors=data_tuple,
+            bucket_boundaries=boundaries,
+            batch_size=batch_size,
+            capacity=queue_capacity,
+            keep_input=keep_input,
+            allow_smaller_final_batch=final_batch,
+            dynamic_pad=True)
+        [image, label, length, text, filename] = data_tuple
+        label = tf.deserialize_many_sparse(label, tf.int64) # post-batching...
+        label = tf.cast(label, tf.int32) # for ctc_loss
+    return image, width, label, length, text, filename
 
 def threaded_input_pipeline(base_dir,file_patterns,
                             num_threads=4,
                             batch_size=32,
                             batch_device=None,
-                            preprocess_device=None):
+                            preprocess_device=None,
+                            num_epochs=None):
 
-    dataset = _get_dataset()
+    queue_capacity = num_threads*batch_size*2
+    # Allow a smaller final batch if we are going for a fixed number of epochs
+    final_batch = (num_epochs!=None) 
 
+    data_queue = _get_data_queue(base_dir, file_patterns, 
+                                 capacity=queue_capacity,
+                                 num_epochs=num_epochs)
+
+    # each thread has a subgraph with its own reader (sharing filename queue)
+    data_tuples = [] # list of subgraph [image, label, width, text] elements
     with tf.device(preprocess_device):
-        dataset = dataset.map(_preprocess_dataset,
-                              num_parallel_calls=num_threads)
-    
-    with tf.device(batch_device): # Create batch
+        for _ in range(num_threads):
+            image, width, label, length, text, filename  = _read_word_record(
+                data_queue)
+            image = _preprocess_image(image) # move after batch?
+            data_tuples.append([image, width, label, length, text, filename])
 
-        # Hack -- probably a better way to do this! Just want dynamic padding!
-        # Pad batches to max data size (bucketing it all into the same bucket)
-        dataset = dataset.apply(tf.contrib.data.bucket_by_sequence_length
-                                (element_length_func=_element_length_fn,
-                                 bucket_batch_sizes=[batch_size, batch_size],
-                                 bucket_boundaries=[0]))
-
-        dataset = dataset.map(lambda image, 
-                              width, label, 
-                              length, text: 
-                              (image, width, 
-                              tf.contrib.layers.dense_to_sparse(label,0),
-                              length, text))
-
-    return dataset
-
-def _element_length_fn(image, width, label, length, text):
-    return width
-
-def dataset_element_length_fn(_, image):
-    return tf.shape(image)[2]
+    with tf.device(batch_device): # Create batch queue
+        image, width, label, length, text, filename  = tf.train.batch_join( 
+            data_tuples, 
+            batch_size=batch_size,
+            capacity=queue_capacity,
+            allow_smaller_final_batch=final_batch,
+            dynamic_pad=True)
+        label = tf.deserialize_many_sparse(label, tf.int64) # post-batching...
+        label = tf.cast(label, tf.int32) # for ctc_loss
+    return image, width, label, length, text, filename
 
 def _get_input_filter(width, width_threshold, length, length_threshold):
     """Boolean op for discarding input data based on string or image size
@@ -150,70 +140,47 @@ def _get_input_filter(width, width_threshold, length, length_threshold):
 
     return keep_input
 
-def _get_dataset():
-    """Get a dataset from generator"""
-    return tf.data.Dataset.from_generator(_generator_wrapper, 
-            (tf.string, tf.int32, tf.int32),
-            (tf.TensorShape([]), 
-            (tf.TensorShape((32, None, 3))),
-            (tf.TensorShape([None]))))
+def _get_data_queue(base_dir, file_patterns=['*.tfrecord'], capacity=2**15,
+                    num_epochs=None):
+    """Get a data queue for a list of record files"""
 
-# Note: Currently not in use: probably more optimal than current implmntation
-def _text_to_labels(text):
-    """Convert given text (tf.string) into a list of tf.int32's"""
-    labels = tf.data.Dataset.from_tensor_slices(tf.string_split([text],""))
-    
-    # Converts ['A', 'B', 'C'] -> [0, 1, 2]
-    # Note: MUST RUN tf.tables_initializer().run() in order for this to work
-    table = tf.contrib.lookup.index_table_from_tensor(mapping=out_charset_tf,
-                                                      num_oov_buckets=1,
-                                                      default_value=-1)
-    labels = table.lookup(labels)
-    
-    return labels
+    # List of lists ...
+    data_files = [tf.gfile.Glob(os.path.join(base_dir,file_pattern))
+                  for file_pattern in file_patterns]
+    # flatten
+    data_files = [data_file for sublist in data_files for data_file in sublist]
+    data_queue = tf.train.string_input_producer(data_files, 
+                                                capacity=capacity,
+                                                num_epochs=num_epochs)
+    return data_queue
 
-def _preprocess_dataset(caption, image, labels):
-    """Get everything how it should be"""
+def _read_word_record(data_queue):
 
-    #NOTE: final image should be pre-grayed by opencv *before* generation
-    image = tf.image.rgb_to_grayscale(image) 
-    image = _preprocess_image(image)
+    reader = tf.TFRecordReader() # Construct a general reader
+    key, example_serialized = reader.read(data_queue) 
 
-    width = tf.size(image[1]) 
-    # labels = _text_to_labels(caption) Not necessary with precomputed labels
-    length = tf.size(labels)
-    text = caption
-    return image, width, labels, length, text
-                
-"""
-def _parse_function(caption, image, labels):
-    Parse the elements of the dataset
-    
-    # Format elements appropriately
-    dataset = .map(_preprocess_dataset, num_parallel_calls=num_threads)
+    feature_map = {
+        'image/encoded':  tf.FixedLenFeature( [], dtype=tf.string, 
+                                              default_value='' ),
+        'image/labels':   tf.VarLenFeature( dtype=tf.int64 ), 
+        'image/width':    tf.FixedLenFeature( [1], dtype=tf.int64,
+                                              default_value=1 ),
+        'image/filename': tf.FixedLenFeature([], dtype=tf.string,
+                                             default_value='' ),
+        'text/string':     tf.FixedLenFeature([], dtype=tf.string,
+                                             default_value='' ),
+        'text/length':    tf.FixedLenFeature( [1], dtype=tf.int64,
+                                              default_value=1 )
+    }
+    features = tf.parse_single_example( example_serialized, feature_map )
 
-    return dataset
-"""
-
-def _char_to_int(character):
-    """Convert given character (really tf.string of length 1) to its integer representation from out_charset"""
-    
-    tf.contrib.lookup.string_to_index(character, out_charset_tf) # default val -1
-    return out_charset.index(character)
-
-def _generator_wrapper():
-    """Compute the labels in python before everything becomes tensors
-       Note: very! SUBOPTIMAL-- Really should not be doing this in python
-       if we don't have to!!!"""
-    gen = data_generator()
-    while True:
-        data = next(gen)
-        caption = data[0]
-        image = data[1]
-
-        # Transform string text to sequence of indices using charset
-        labels = [out_charset.index(c) for c in list(caption)]
-        yield caption, image, labels
+    image = tf.image.decode_jpeg( features['image/encoded'], channels=1 ) #gray
+    width = tf.cast( features['image/width'], tf.int32) # for ctc_loss
+    label = tf.serialize_sparse( features['image/labels'] ) # for batching
+    length = features['text/length']
+    text = features['text/string']
+    filename = features['image/filename']
+    return image,width,label,length,text,filename
 
 def _preprocess_image(image):
     # Rescale from uint8([0,255]) to float([-0.5,0.5])
