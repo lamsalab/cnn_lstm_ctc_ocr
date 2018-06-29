@@ -33,7 +33,8 @@ def bucketed_input_pipeline(base_dir,file_patterns,
                             input_device=None,
                             width_threshold=None,
                             length_threshold=None,
-                            num_epoch=None):
+                            num_epoch=None,
+                            train_device=None):
     """Get input tensors bucketed by image width
     Returns:
       dataset : Dataset with elements structured as follows:
@@ -47,7 +48,6 @@ def bucketed_input_pipeline(base_dir,file_patterns,
     filenames = tf.data.Dataset.from_tensor_slices(
         _get_filenames(base_dir, file_patterns))
 
-    # TODO: Think about sharding if we're going to have multiple processors?    
     with tf.device(input_device): # Create bucketing batcher
         
         dataset = filenames.apply(
@@ -86,8 +86,15 @@ def bucketed_input_pipeline(base_dir,file_patterns,
              text, 
              filename),
             num_parallel_calls=num_threads)
+        
 
-    return dataset.prefetch(2*num_threads) # prefetch 2*num_threads*batch_size
+        # prefetch 2*num_threads*batch_size, if we have a training gpu, use it
+        num_batches = 2*num_threads
+
+        if train_device:
+            return dataset.apply(tf.contrib.data.prefetch_to_device(
+                train_device, num_batches))
+        return dataset.prefetch(num_batches) 
 
 def threaded_input_pipeline(base_dir,file_patterns,
                             num_threads=4,
@@ -167,7 +174,7 @@ def _get_input_filter(width, width_threshold, length, length_threshold):
             keep_input = tf.logical_and( keep_input, length_filter)
 
     if keep_input==None:
-        keep_input = True
+         keep_input = True
     else:
         keep_input = tf.reshape( keep_input, [] ) # explicitly make a scalar
 
@@ -187,10 +194,10 @@ def _get_filenames(base_dir, file_patterns=['*.tfrecord']):
 # https://www.tensorflow.org/programmers_guide/datasets#consuming_tfrecord_data
 def _parse_function(data):
     """Parse the elements of the dataset"""
-
+    #with tf.device('/gpu:0'): # Create bucketing batcher
     feature_map = {
         'image/encoded'  :   tf.FixedLenFeature([], dtype=tf.string, 
-                                                default_value='' ),
+                                                    default_value='' ),
         'image/labels'   :   tf.VarLenFeature( dtype=tf.int64 ), 
         'image/width'    :   tf.FixedLenFeature([1], dtype=tf.int64,
                                                 default_value=1 ),
@@ -203,7 +210,7 @@ def _parse_function(data):
     }
     
     features = tf.parse_single_example(data, feature_map)
-    
+        
     # Initialize fields according to feature map
     image = tf.image.decode_jpeg( features['image/encoded'], channels=1 ) #gray
     width = tf.cast( features['image/width'], tf.int32 ) # for ctc_loss
@@ -211,10 +218,10 @@ def _parse_function(data):
     length = features['text/length']
     text = features['text/string']
     filename = features['image/filename']
-
+    
     # Prepare image
     image = _preprocess_image(image)
-
+    
     return image,width,label,length,text,filename
 
 def _preprocess_image(image):

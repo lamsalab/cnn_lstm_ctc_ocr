@@ -51,7 +51,8 @@ tf.app.flags.DEFINE_string('train_device','/gpu:1',
                            """Device for training graph placement""")
 tf.app.flags.DEFINE_string('input_device','/gpu:0',
                            """Device for preprocess/batching graph placement""")
-
+tf.app.flags.DEFINE_boolean('num_visible_devices', 1,
+                            """Number of visible devices (excluding cpu)""")
 tf.app.flags.DEFINE_string('train_path','../data/train/',
                            """Base directory for training data""")
 tf.app.flags.DEFINE_string('filename_pattern','words-*',
@@ -64,6 +65,12 @@ tf.app.flags.DEFINE_integer('length_threshold',None,
                             """Limit of input string length width""")
 
 tf.logging.set_verbosity(tf.logging.INFO)
+
+# Prevents gpu pinning to a nonexistent device
+if FLAGS.num_visible_devices < 2:
+    real_train_device = '/gpu:0'
+else:
+    real_train_device= train_device
 
 # Non-configurable parameters
 optimizer='Adam'
@@ -79,7 +86,8 @@ def _get_input_stream():
         num_threads=FLAGS.num_input_threads,
         input_device=FLAGS.input_device,
         width_threshold=FLAGS.width_threshold,
-        length_threshold=FLAGS.length_threshold )
+        length_threshold=FLAGS.length_threshold,
+        train_device=real_train_device)
     
     return dataset.make_one_shot_iterator()
 
@@ -175,9 +183,8 @@ def main(argv=None):
         input_stream = _get_input_stream()
         global_step = tf.train.get_or_create_global_step()
 
-        image, width, label, _, _, _ = input_stream.get_next()
-
-        with tf.device(FLAGS.train_device):
+        with tf.device(real_train_device):
+            image, width, label, _, _, _ = input_stream.get_next()
             features,sequence_length = model.convnet_layers( image, width, mode)
             logits = model.rnn_layers( features, sequence_length,
                                        mjsynth.num_classes() )
