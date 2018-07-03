@@ -49,12 +49,11 @@ def bucketed_input_pipeline(base_dir,file_patterns,
         _get_filenames(base_dir, file_patterns))
 
     with tf.device(input_device): # Create bucketing batcher
-        
-        dataset = filenames.apply(
-            tf.contrib.data.parallel_interleave(tf.data.TFRecordDataset,
-                                                cycle_length=num_threads,  
-                                                sloppy=True))
-        
+    
+        dataset = tf.data.TFRecordDataset(filenames, 
+                                          num_parallel_reads=num_threads,
+                                          buffer_size=capacity)
+
         # Preprocess
         dataset = dataset.map(_parse_function, num_parallel_calls=num_threads)
         
@@ -64,37 +63,44 @@ def bucketed_input_pipeline(base_dir,file_patterns,
                 lambda image, width, label, length, text, filename:
                 _get_input_filter(width, width_threshold,
                                   length, length_threshold))
-
-
+            
         # Bucket according to image width and batch
         dataset = dataset.apply(tf.contrib.data.bucket_by_sequence_length(
             element_length_func=_element_length_fn,
             bucket_batch_sizes=np.full(len(boundaries) + 1, batch_size),
             bucket_boundaries=boundaries))
-
+        
         # Repeat for num_epochs
         dataset = dataset.repeat(num_epoch)
-
-        # Deserialize sparse tensor
-        dataset = dataset.map(
-            lambda image, width, label, length, text, filename: 
-            (image, 
-             width, 
-             tf.cast(tf.deserialize_many_sparse(label, tf.int64), 
-                     tf.int32),
-             length, 
-             text, 
-             filename),
-            num_parallel_calls=num_threads)
         
+        """
+        Split it up so prefetching to GPU is possible, 
+        NOTE:probably a better way to do this.
+        Master branch has the following contrib.data function, which would
+        be nice to use: choose_from_datasets
+        But also, this is not going to be necessary (hopefully)
+        if prefetch_to_device allows for sparse tensors to be prefetched to GPU.
+        See: https://github.com/tensorflow/tensorflow/issues/20521
+        """
+        prefetchable_dataset = dataset.map(
+            lambda image, width, label, length, text, filename:
+            (image, width), num_parallel_calls=num_threads)
 
-        # prefetch 2*num_threads*batch_size, if we have a training gpu, use it
+        # prefetch 2*num_threads*batch_size
         num_batches = 2*num_threads
 
-        if train_device:
-            return dataset.apply(tf.contrib.data.prefetch_to_device(
+        # Deserialize sparse tensor
+        labels_dataset = dataset.map(
+            lambda image, width, label, length, text, filename: 
+            tf.cast(tf.deserialize_many_sparse(label, tf.int64), 
+                     tf.int32),
+            num_parallel_calls=num_threads).prefetch(num_batches)
+        
+        prefetchable_dataset = prefetchable_dataset.apply(
+            tf.contrib.data.prefetch_to_device(
                 train_device, num_batches))
-        return dataset.prefetch(num_batches) 
+        
+        return prefetchable_dataset, labels_dataset
 
 def threaded_input_pipeline(base_dir,file_patterns,
                             num_threads=4,

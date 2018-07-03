@@ -68,9 +68,9 @@ tf.logging.set_verbosity(tf.logging.INFO)
 
 # Prevents gpu pinning to a nonexistent device
 if FLAGS.num_visible_devices < 2:
-    real_train_device = '/gpu:0'
+    real_train_device='/gpu:0' 
 else:
-    real_train_device= train_device
+    real_train_device=train_device
 
 # Non-configurable parameters
 optimizer='Adam'
@@ -79,7 +79,7 @@ mode = learn.ModeKeys.TRAIN # 'Configure' training mode for dropout layers
 def _get_input_stream():
     """Set up and return image, label, and image width tensors"""
     print("Getting input stream...")
-    dataset=mjsynth.bucketed_input_pipeline(
+    gpu_dataset,labels_dataset=mjsynth.bucketed_input_pipeline(
         FLAGS.train_path, 
         str.split(FLAGS.filename_pattern,','),
         batch_size=FLAGS.batch_size,
@@ -89,24 +89,8 @@ def _get_input_stream():
         length_threshold=FLAGS.length_threshold,
         train_device=real_train_device)
     
-    return dataset.make_one_shot_iterator()
-
-
-def _get_single_input_stream():
-    
-    """Set up and return image, label, and width tensors"""
-
-    dataset=mjsynth.threaded_input_pipeline(
-        deps.get('records'), 
-        str.split(FLAGS.filename_pattern,','),
-        batch_size=1,
-        num_threads=FLAGS.num_input_threads,
-        num_epochs=1,
-        batch_device=FLAGS.input_device, 
-        preprocess_device=FLAGS.input_device )
-
-    return dataset.make_one_shot_iterator()
-
+    return gpu_dataset.make_one_shot_iterator(), 
+    labels_dataset.make_one_shot_iterator()
 
 def _get_training(rnn_logits,label,sequence_length):
     """Set up training ops"""
@@ -180,14 +164,16 @@ def _get_init_pretrained():
 def main(argv=None):
 
     with tf.Graph().as_default():
-        input_stream = _get_input_stream()
+        gpu_stream, label_stream = _get_input_stream()
         global_step = tf.train.get_or_create_global_step()
+        
+        image, width = gpu_stream.get_next()
+        label = label_stream.get_next()
 
         with tf.device(real_train_device):
-            image, width, label, _, _, _ = input_stream.get_next()
             features,sequence_length = model.convnet_layers( image, width, mode)
             logits = model.rnn_layers( features, sequence_length,
-                                       mjsynth.num_classes() )
+                                   mjsynth.num_classes() )
             train_op = _get_training(logits,label,sequence_length)
 
         session_config = _get_session_config()
