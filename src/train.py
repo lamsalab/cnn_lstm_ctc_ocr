@@ -51,7 +51,7 @@ tf.app.flags.DEFINE_string('train_device','/gpu:1',
                            """Device for training graph placement""")
 tf.app.flags.DEFINE_string('input_device','/gpu:0',
                            """Device for preprocess/batching graph placement""")
-tf.app.flags.DEFINE_boolean('num_visible_devices', 1,
+tf.app.flags.DEFINE_integer('num_visible_devices', 1,
                             """Number of visible devices (excluding cpu)""")
 tf.app.flags.DEFINE_string('train_path','../data/train/',
                            """Base directory for training data""")
@@ -70,7 +70,7 @@ tf.logging.set_verbosity(tf.logging.INFO)
 if FLAGS.num_visible_devices < 2:
     real_train_device='/gpu:0' 
 else:
-    real_train_device=train_device
+    real_train_device=FLAGS.train_device
 
 # Non-configurable parameters
 optimizer='Adam'
@@ -89,8 +89,7 @@ def _get_input_stream():
         length_threshold=FLAGS.length_threshold,
         train_device=real_train_device)
     
-    return gpu_dataset.make_one_shot_iterator(), 
-    labels_dataset.make_one_shot_iterator()
+    return gpu_dataset.make_one_shot_iterator(), labels_dataset.make_one_shot_iterator()
 
 def _get_training(rnn_logits,label,sequence_length):
     """Set up training ops"""
