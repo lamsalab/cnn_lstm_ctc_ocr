@@ -24,6 +24,7 @@ import numpy as np
 # from the calls to .index in the decoder below
 out_charset="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 out_charset_tf=tf.string_split([tf.constant("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")], "")
+optimizer = 'Adam'
 
 def num_classes():
     return len(out_charset)
@@ -80,13 +81,11 @@ def bucketed_input_pipeline(base_dir,file_patterns,
     # Deserialize sparse tensor
     dataset = dataset.map(
         lambda image, width, label, length, text, filename: 
-        (image, 
-         width, 
+        ({"image": image, 
+          "width": width, 
+          "optimizer": optimizer},
          tf.cast(tf.deserialize_many_sparse(label, tf.int64), 
-                 tf.int32),
-         length, 
-         text, 
-         filename),
+                 tf.int32)),
         num_parallel_calls=num_threads)
         
     return dataset

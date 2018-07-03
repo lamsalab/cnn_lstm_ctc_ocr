@@ -48,12 +48,12 @@ def _get_input_stream():
     #iterator = dataset.make_one_shot_iterator() 
 
     #image, width, label, _, _, _ = iterator.get_next()
-    dataset = dataset.map(lambda image, width, 
-                          label, length, 
-                          text, filename: ({"image": image, 
-                                            "width": width, 
-                                            "optimizer": optimizer}, 
-                                           label))
+    #dataset = dataset.map(lambda image, width, 
+    #                      label, length, 
+    #                      text, filename: ({"image": image, 
+    #                                        "width": width, 
+    #                                        "optimizer": optimizer}, 
+    #                                       label))
     # The input for the model function 
     #features = {"image": image, "width": width, "optimizer": optimizer}
     
