@@ -49,45 +49,45 @@ def bucketed_input_pipeline(base_dir,file_patterns,
     filenames = tf.data.Dataset.from_tensor_slices(
         _get_filenames(base_dir, file_patterns))
     
-    with tf.device(input_device): # Create bucketing batcher
+    #with tf.device(input_device): # Create bucketing batcher
         
         # https://www.tensorflow.org/performance/datasets_performance
-        dataset = filenames.apply(
-            tf.contrib.data.parallel_interleave(tf.data.TFRecordDataset,
-                                                cycle_length=num_threads,  
-                                                sloppy=True))
-        
-        # Preprocess
-        dataset = dataset.map(_parse_function, num_parallel_calls=num_threads)
-        
-        # Filter out inappropriately dimension-ed elements
-        if(width_threshold != None or length_threshold != None):
-            dataset = dataset.filter(
-                lambda image, width, label, length, text, filename:
-                _get_input_filter(width, width_threshold,
-                                  length, length_threshold))
+    dataset = filenames.apply(
+        tf.contrib.data.parallel_interleave(tf.data.TFRecordDataset,
+                                            cycle_length=num_threads,  
+                                            sloppy=True))
+
+    # Preprocess
+    dataset = dataset.map(_parse_function, num_parallel_calls=num_threads)
+
+    # Filter out inappropriately dimension-ed elements
+    if(width_threshold != None or length_threshold != None):
+        dataset = dataset.filter(
+            lambda image, width, label, length, text, filename:
+            _get_input_filter(width, width_threshold,
+                              length, length_threshold))
 
 
-        # Bucket according to image width and batch
-        dataset = dataset.apply(tf.contrib.data.bucket_by_sequence_length(
-            element_length_func=_element_length_fn,
-            bucket_batch_sizes=np.full(len(boundaries) + 1, batch_size),
-            bucket_boundaries=boundaries))
+    # Bucket according to image width and batch
+    dataset = dataset.apply(tf.contrib.data.bucket_by_sequence_length(
+        element_length_func=_element_length_fn,
+        bucket_batch_sizes=np.full(len(boundaries) + 1, batch_size),
+        bucket_boundaries=boundaries))
 
-        # Repeat for num_epochs
-        dataset = dataset.repeat(num_epoch)
+    # Repeat for num_epochs
+    dataset = dataset.repeat(num_epoch)
 
-        # Deserialize sparse tensor
-        dataset = dataset.map(
-            lambda image, width, label, length, text, filename: 
-            (image, 
-             width, 
-             tf.cast(tf.deserialize_many_sparse(label, tf.int64), 
-                     tf.int32),
-             length, 
-             text, 
-             filename),
-            num_parallel_calls=num_threads)
+    # Deserialize sparse tensor
+    dataset = dataset.map(
+        lambda image, width, label, length, text, filename: 
+        (image, 
+         width, 
+         tf.cast(tf.deserialize_many_sparse(label, tf.int64), 
+                 tf.int32),
+         length, 
+         text, 
+         filename),
+        num_parallel_calls=num_threads)
         
     return dataset
 
@@ -103,33 +103,33 @@ def threaded_input_pipeline(base_dir,file_patterns,
         _get_filenames(base_dir, file_patterns))
 
 
-    with tf.device(preprocess_device):
+    #with tf.device(preprocess_device):
 
-        # https://www.tensorflow.org/performance/datasets_performance
-        dataset = filenames.apply(
-            tf.contrib.data.parallel_interleave(tf.data.TFRecordDataset,
-                                                cycle_length=num_threads,  
-                                                sloppy=True))
-        dataset = dataset.map(_parse_function,
-                              num_parallel_calls=num_threads)
+    # https://www.tensorflow.org/performance/datasets_performance
+    dataset = filenames.apply(
+        tf.contrib.data.parallel_interleave(tf.data.TFRecordDataset,
+                                            cycle_length=num_threads,  
+                                            sloppy=True))
+    dataset = dataset.map(_parse_function,
+                          num_parallel_calls=num_threads)
 
     
-    with tf.device(batch_device): # Create batch
+    #with tf.device(batch_device): # Create batch
 
-        dataset = dataset.padded_batch(batch_size, 
-                                       padded_shapes=dataset.output_shapes)
+    dataset = dataset.padded_batch(batch_size, 
+                                   padded_shapes=dataset.output_shapes)
 
-        dataset = dataset.map(lambda image, 
-                              width, label, 
-                              length, text, filename: 
-                              (image, width, 
-                               tf.cast(tf.deserialize_many_sparse(label, 
-                                                                  tf.int64),
-                                       tf.int32),
-                               length, text, filename))
+    dataset = dataset.map(lambda image, 
+                          width, label, 
+                          length, text, filename: 
+                          (image, width, 
+                           tf.cast(tf.deserialize_many_sparse(label, 
+                                                              tf.int64),
+                                   tf.int32),
+                           length, text, filename))
 
-        # Repeat for num_epochs
-        dataset = dataset.repeat(num_epochs)
+    # Repeat for num_epochs
+    dataset = dataset.repeat(num_epochs)
 
     return dataset
 

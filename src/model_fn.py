@@ -94,35 +94,35 @@ def model_fn (features, labels, mode):
 
     #Training the model
     if mode == tf.estimator.ModeKeys.TRAIN:
-        with tf.device(FLAGS.train_device):
-            train_op, loss = _get_training(logits,labels,sequence_length)
-            return tf.estimator.EstimatorSpec(mode=mode, 
-                                          loss=loss, 
-                                          train_op=train_op)
+        #with tf.device(FLAGS.train_device):
+        train_op, loss = _get_training(logits,labels,sequence_length)
+        return tf.estimator.EstimatorSpec(mode=mode, 
+                                      loss=loss, 
+                                      train_op=train_op)
 
     #Testing the model
     elif mode == tf.estimator.ModeKeys.PREDICT:
-        with tf.device(FLAGS.device):
-            label = features['label']
-            length = features['length']
+        #with tf.device(FLAGS.device):
+        label = features['label']
+        length = features['length']
 
-            loss,label_error,sequence_error = _get_testing(
-                logits,sequence_length,label,length)
+        loss,label_error,sequence_error = _get_testing(
+            logits,sequence_length,label,length)
 
-            #Create homogeneity among the return values
-            global_step = tf.convert_to_tensor(
-                tf.train.get_or_create_global_step())
-            global_step = tf.cast(global_step, tf.float32)
-            sequence_error = tf.cast(sequence_error, tf.float32)
+        #Create homogeneity among the return values
+        global_step = tf.convert_to_tensor(
+            tf.train.get_or_create_global_step())
+        global_step = tf.cast(global_step, tf.float32)
+        sequence_error = tf.cast(sequence_error, tf.float32)
 
-            #Get the correct format to pass to estimator spec
-            result = tf.convert_to_tensor([(tf.stack([global_step,
-                                                  loss, 
-                                                  label_error, 
-                                                  sequence_error], axis=0))])
+        #Get the correct format to pass to estimator spec
+        result = tf.convert_to_tensor([(tf.stack([global_step,
+                                              loss, 
+                                              label_error, 
+                                              sequence_error], axis=0))])
 
-            return tf.estimator.EstimatorSpec(mode=mode, loss=loss, 
-                                      predictions=result, 
-                                      train_op=None)
+        return tf.estimator.EstimatorSpec(mode=mode, loss=loss, 
+                                  predictions=result, 
+                                  train_op=None)
 
 
