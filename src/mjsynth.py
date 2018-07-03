@@ -64,7 +64,7 @@ def bucketed_input_pipeline(base_dir,file_patterns,
     # Filter out inappropriately dimension-ed elements
     if(width_threshold != None or length_threshold != None):
         dataset = dataset.filter(
-            lambda image, width, label, length, text, filename:
+            lambda image, width, label, length:#, text, filename:
             _get_input_filter(width, width_threshold,
                               length, length_threshold))
 
@@ -80,7 +80,7 @@ def bucketed_input_pipeline(base_dir,file_patterns,
 
     # Deserialize sparse tensor
     dataset = dataset.map(
-        lambda image, width, label, length, text, filename: 
+        lambda image, width, label, length:#, text, filename: 
         ({"image": image, 
           "width": width, 
           "optimizer": optimizer},
@@ -132,7 +132,7 @@ def threaded_input_pipeline(base_dir,file_patterns,
 
     return dataset
 
-def _element_length_fn(image, width, label, length, text, filename):
+def _element_length_fn(image, width, label, length):#, text, filename):
     return width
 
 def dataset_element_length_fn(_, image):
@@ -191,10 +191,10 @@ def _parse_function(data):
         'image/labels'   :   tf.VarLenFeature( dtype=tf.int64 ), 
         'image/width'    :   tf.FixedLenFeature([1], dtype=tf.int64,
                                                 default_value=1 ),
-        'image/filename' :   tf.FixedLenFeature([], dtype=tf.string,
-                                                default_value='' ),
-        'text/string'    :   tf.FixedLenFeature([], dtype=tf.string,
-                                                default_value='' ),
+        #'image/filename' :   tf.FixedLenFeature([], dtype=tf.string,
+                                                #default_value='' ),
+        #'text/string'    :   tf.FixedLenFeature([], dtype=tf.string,
+        #                                        default_value='' ),
         'text/length'    :   tf.FixedLenFeature([1], dtype=tf.int64,
                                                 default_value=1 )
     }
@@ -206,13 +206,13 @@ def _parse_function(data):
     width = tf.cast( features['image/width'], tf.int32) # for ctc_loss
     label = tf.serialize_sparse( features['image/labels'] ) # for batching
     length = features['text/length']
-    text = features['text/string']
-    filename = features['image/filename']
+    #text = features['text/string']
+    #filename = features['image/filename']
 
     # Prepare image
     image = _preprocess_image(image)
 
-    return image,width,label,length,text,filename
+    return image,width,label,length#,text,filename
 
 def _preprocess_image(image):
     # Rescale from uint8([0,255]) to float([-0.5,0.5])
