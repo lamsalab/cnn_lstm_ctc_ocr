@@ -5,6 +5,8 @@ import flags
 
 FLAGS = tf.app.flags.FLAGS
 
+optimizer='Adam'
+
 def _get_training(rnn_logits,label,sequence_length):
     """Set up training ops"""
     with tf.name_scope("train"):
@@ -83,7 +85,7 @@ def model_fn (features, labels, mode):
 
     image = features['image']
     width = features['width']
-    optimizer = features['optimizer']
+    
 
     #NOT SURE WHAT DEVICE TO PUT THESE COMPUTATIONS IN
     conv_features,sequence_length = model.convnet_layers( image, 
