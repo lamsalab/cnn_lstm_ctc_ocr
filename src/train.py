@@ -62,7 +62,10 @@ tf.app.flags.DEFINE_integer('width_threshold',None,
                             """Limit of input image width""")
 tf.app.flags.DEFINE_integer('length_threshold',None,
                             """Limit of input string length width""")
-
+tf.app.flags.DEFINE_integer('summary_save_interval',30,
+                            """Interval for summary saver hook""")
+tf.app.flags.DEFINE_integer('checkpoint_save_interval',150,
+                            """Interval for checkpoint saver hook""")
 tf.logging.set_verbosity(tf.logging.INFO)
 
 # Non-configurable parameters
@@ -196,13 +199,13 @@ def main(argv=None):
 
         summary_hook = tf.train.SummarySaverHook(
             output_dir=FLAGS.output,
-            save_secs=30,
+            save_secs=FLAGS.summary_save_interval,
             summary_op=summary_op
         )
         
         saver_hook = tf.train.CheckpointSaverHook(
             checkpoint_dir=FLAGS.output,
-            save_secs=150
+            save_secs=FLAGS.checkpoint_save_interval
         )
 
         monitor = tf.train.MonitoredTrainingSession(
