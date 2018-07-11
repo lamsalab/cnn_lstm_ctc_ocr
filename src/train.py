@@ -66,6 +66,9 @@ tf.app.flags.DEFINE_integer('summary_save_interval',30,
                             """Interval for summary saver hook""")
 tf.app.flags.DEFINE_integer('checkpoint_save_interval',150,
                             """Interval for checkpoint saver hook""")
+tf.app.flags.DEFINE_boolean('log_device_placement',False,
+                          """Boolean flag for logging device placement""")
+
 tf.logging.set_verbosity(tf.logging.INFO)
 
 # Non-configurable parameters
@@ -151,7 +154,7 @@ def _get_session_config():
 
     config=tf.ConfigProto(
         allow_soft_placement=True, 
-        log_device_placement=False)
+        log_device_placement=FLAGS.log_device_placement)
 
     return config
 
